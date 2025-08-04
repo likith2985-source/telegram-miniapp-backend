@@ -1,8 +1,10 @@
-// ====== Step 6: server.js (JSON Server + Express Backend) ======
+// ====== server.js (JSON Server + Express Backend + Custom Admin Endpoints) ======
 
 const jsonServer = require('json-server');
 const express = require('express');
 const path = require('path');
+const fs = require('fs');
+
 const server = express();
 const router = jsonServer.router('db.json');
 const middlewares = jsonServer.defaults();
@@ -10,7 +12,40 @@ const middlewares = jsonServer.defaults();
 server.use(middlewares);
 server.use(express.json());
 
-// ====== Custom Route: POST /withdraw ======
+// --- (Assumed) Util for direct DB file access for custom admin endpoints ---
+function readDB() {
+  return JSON.parse(fs.readFileSync(path.join(__dirname, 'db.json')));
+}
+function writeDB(db) {
+  fs.writeFileSync(path.join(__dirname, 'db.json'), JSON.stringify(db, null, 2));
+}
+
+// ====== Custom Route: Admin: Get All Withdraw Requests ======
+server.get('/withdrawals', (req, res) => {
+  const db = readDB();
+  res.json(db.withdrawals || []);
+});
+
+// ====== Custom Route: Admin: Post a Task to All Users ======
+server.post('/post-task', (req, res) => {
+  const db = readDB();
+  const { task } = req.body;
+
+  Object.keys(db.users).forEach(userId => {
+    if (!db.users[userId].tasks) {
+      db.users[userId].tasks = [];
+    }
+    db.users[userId].tasks.push({
+      task,
+      time: new Date().toISOString()
+    });
+  });
+
+  writeDB(db);
+  res.json({ message: "Task posted to all users" });
+});
+
+// ====== Custom Route: POST /withdraw (User requests withdrawal) ======
 server.post('/withdraw', (req, res) => {
   const db = router.db;
   const { userId, amount } = req.body;
@@ -31,7 +66,6 @@ server.post('/withdraw', (req, res) => {
 });
 
 // ====== Custom Route: POST /withdraw-request ======
-// (Alternative/Extended Logic with earnings zeroing)
 server.post('/withdraw-request', (req, res) => {
   const db = router.db;
   const { userId } = req.body;
@@ -41,7 +75,7 @@ server.post('/withdraw-request', (req, res) => {
 
   if (!user) return res.status(404).send("User not found");
 
-  // Record withdrawal request
+  // Record withdrawal request and reset earnings
   db.get('withdrawals').push({
     id: Date.now(),
     userId: userId,
@@ -49,15 +83,15 @@ server.post('/withdraw-request', (req, res) => {
     amount: user.earnings
   }).write();
 
-  // Reset user earnings
   db.get('users').find({ id: userId }).assign({ earnings: 0 }).write();
 
   res.send("Withdrawal request submitted");
 });
 
-// ====== Json-Server Default Router ======
+// ====== Use json-server's Default Router ======
 server.use(router);
 
+// ====== Start the Server ======
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`JSON Server running on port ${PORT}`);
